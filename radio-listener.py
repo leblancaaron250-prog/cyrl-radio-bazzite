@@ -130,6 +130,7 @@ try:
         force_reload=False,
         onnx=False,
         verbose=False,
+        trust_repo=True,
     )
     VAD_AVAILABLE = True
     log.info("Silero VAD ready")

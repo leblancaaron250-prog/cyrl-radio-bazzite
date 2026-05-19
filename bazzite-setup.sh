@@ -158,6 +158,7 @@ model, utils = torch.hub.load(
     force_reload=False,
     onnx=False,
     verbose=False,
+    trust_repo=True,
 )
 print("Silero VAD ready.")
 PYEOF
