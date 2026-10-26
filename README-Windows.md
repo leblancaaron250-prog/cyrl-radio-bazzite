@@ -9,18 +9,44 @@ This describes how to run the same ATC voice-to-board pipeline on Windows. The P
 ## Prerequisites
 
 1. **Python 3.10 or newer** — download the installer from [python.org](https://www.python.org/downloads/windows/) and check "Add Python to PATH" during installation.
-2. **Git for Windows** — download from [gitforwindows.org](https://gitforwindows.org/).
+2. **Git for Windows** (optional) — only needed for the `git clone` method. Download from [gitforwindows.org](https://gitforwindows.org/) or use `winget install --id Git.Git -e`. If you don't want to install it, use the ZIP download in "Option B" below.
 3. **FFmpeg** — download a Windows build from [ffmpeg.org/download.html](https://ffmpeg.org/download.html) or use `winget install Gyan.FFmpeg`, then add its `bin` folder to your `PATH`.
 4. A USB audio adapter or sound card with a line-in/microphone jack, plus your scanner on 122.300 MHz.
+
+## Get the files
+
+**Option A — with Git (preferred):**
+
+```bat
+git clone https://github.com/leblancaaron250-prog/cyrl-radio-bazzite.git
+cd cyrl-radio-bazzite
+```
+
+If you see `'git' is not recognized...`, either install Git or use Option B:
+
+```bat
+winget install --id Git.Git -e
+```
+
+Then **close and reopen Command Prompt** so the new PATH takes effect, and retry the clone.
+
+**Option B — without Git (no installation needed):**
+
+Download the repository as a ZIP straight from GitHub. Either click this link — [Download cyrl-radio-bazzite.zip](https://github.com/leblancaaron250-prog/cyrl-radio-bazzite/archive/refs/heads/main.zip) — or paste in Command Prompt / PowerShell:
+
+```bat
+curl -L -o cyrl-radio-bazzite.zip https://github.com/leblancaaron250-prog/cyrl-radio-bazzite/archive/refs/heads/main.zip
+tar -xf cyrl-radio-bazzite.zip
+cd cyrl-radio-bazzite-main
+```
+
+(`curl` and `tar` are built into Windows 10/11. The folder is named `cyrl-radio-bazzite-main` because the ZIP unpacks with the branch name appended.)
 
 ## Installation (Command Prompt)
 
 Open **Command Prompt** (run as your normal user, no administrator required) and paste:
 
 ```bat
-git clone https://github.com/leblancaaron250-prog/cyrl-radio-bazzite.git
-cd cyrl-radio-bazzite
-
 python -m pip install --upgrade pip
 
 REM PyTorch CPU build (required before other packages)
@@ -31,6 +57,8 @@ python -m pip install openai-whisper sounddevice scipy requests numpy
 ```
 
 PowerShell is equivalent; just replace `REM` with `#`.
+
+> **Note:** Option B users skip `git` entirely. The only downside is pulling updates later requires re-downloading the ZIP.
 
 ## Configuration
 
@@ -99,6 +127,7 @@ Or install as a Windows service using [NSSM](https://nssm.cc/) if it must run wi
 - `torch.hub` downloads to `%USERPROFILE%\.cache\torch\hub`; the Silero VAD and Whisper models download on first run, exactly as on Linux.
 - Whisper's `fp16` warning on CPU appears on Windows too and is harmless.
 - If the console closes immediately, run from an open Command Prompt so you can see any Python traceback.
+- ZIP-install users (Option B) update by re-downloading the ZIP and replacing `radio-listener.py` — your `config.ini` and logs are unaffected.
 
 ## Verified against
 
