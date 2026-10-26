@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  CYRL Radio Listener — BazziteOS / Fedora Setup Script
+#  CYRL Radio Listener — Multi-Platform Setup Script
 #  Red Lake Airport (CYRL)
 #
-#  Installs and configures the voice-to-board pipeline on a BazziteOS laptop.
-#  BazziteOS is based on Fedora Atomic (uses rpm-ostree or dnf/distrobox).
+#  Installs and configures the voice-to-board pipeline. Supported platforms:
+#    • BazziteOS / Fedora (rpm-ostree or dnf)
+#    • Linux Mint / Debian / Ubuntu (apt)
+#    • Windows is documented separately (see README-Windows.md)
 #
 #  Usage:
 #    chmod +x bazzite-setup.sh
@@ -21,6 +23,7 @@
 #
 #  NOTE: BazziteOS uses an immutable filesystem. System packages are installed
 #  via 'rpm-ostree install' (applies on next boot) OR via a Distrobox container.
+#  Linux Mint / Debian / Ubuntu use 'apt install' directly.
 #  This script auto-detects which method is available and uses the right one.
 #  Python packages are always installed to ~/.local (user pip, no root).
 # =============================================================================
@@ -44,39 +47,55 @@ LOG_DIR="$HOME/.local/share/cyrl-radio/logs"
 SERVICE_DIR="$HOME/.config/systemd/user"
 SCRIPT_SRC="$(dirname "$(realpath "$0")")/radio-listener.py"
 
-header "CYRL Radio Listener — BazziteOS Setup"
+header "CYRL Radio Listener Setup"
 echo "  Install dir : $INSTALL_DIR"
 echo "  Config file : $CONFIG_FILE"
 echo "  Log dir     : $LOG_DIR"
 echo ""
 
-# ── Detect Bazzite/Fedora environment ────────────────────────────────────────
+# ── Detect environment (Bazzite/Fedora or Debian/Mint/Ubuntu) ────────────────
 header "Detecting environment"
 
 IS_BAZZITE=false
 IS_FEDORA=false
+IS_DEBIAN_FAMILY=false
 HAS_RPM_OSTREE=false
 HAS_DNF=false
+HAS_APT=false
 HAS_DISTROBOX=false
 
 [[ -f /etc/os-release ]] && source /etc/os-release
 [[ "${ID:-}" == "bazzite" || "${ID_LIKE:-}" =~ "fedora" ]] && IS_BAZZITE=true
 [[ "${ID:-}" == "fedora" || "${ID_LIKE:-}" =~ "fedora" ]]  && IS_FEDORA=true
+[[ "${ID:-}" == "linuxmint" || "${ID:-}" == "debian" || "${ID:-}" == "ubuntu" ]] && IS_DEBIAN_FAMILY=true
 command -v rpm-ostree &>/dev/null && HAS_RPM_OSTREE=true
 command -v dnf        &>/dev/null && HAS_DNF=true
+command -v apt        &>/dev/null && HAS_APT=true
 command -v distrobox  &>/dev/null && HAS_DISTROBOX=true
 
 info "OS: ${PRETTY_NAME:-unknown}"
-info "rpm-ostree: $HAS_RPM_OSTREE | dnf: $HAS_DNF | distrobox: $HAS_DISTROBOX"
+info "apt: $HAS_APT | dnf: $HAS_DNF | rpm-ostree: $HAS_RPM_OSTREE | distrobox: $HAS_DISTROBOX"
+
+if $IS_DEBIAN_FAMILY && ! $HAS_APT; then
+    warn "Detected Debian-family OS but 'apt' was not found in PATH."
+    warn "Install it and re-run, or install packages manually."
+fi
 
 # ── Install system packages ───────────────────────────────────────────────────
 header "Installing system packages"
 
-SYS_PKGS="python3 python3-pip portaudio portaudio-devel ffmpeg gcc python3-devel"
+SYS_PKGS_FEDORA="python3 python3-pip portaudio portaudio-devel ffmpeg gcc python3-devel"
+SYS_PKGS_DEBIAN="python3 python3-pip portaudio19-dev ffmpeg build-essential python3-dev"
+
+install_via_apt() {
+    info "Installing via apt (Linux Mint / Debian / Ubuntu)..."
+    sudo apt-get update
+    sudo apt-get install -y $SYS_PKGS_DEBIAN
+}
 
 install_via_dnf() {
     info "Installing via dnf (layered or standard Fedora)..."
-    sudo dnf install -y $SYS_PKGS 2>&1 | grep -E "Install|Already|Error" || true
+    sudo dnf install -y $SYS_PKGS_FEDORA 2>&1 | grep -E "Install|Already|Error" || true
 }
 
 install_via_rpm_ostree() {
@@ -108,13 +127,16 @@ install_via_rpm_ostree() {
     fi
 }
 
-if $HAS_DNF && ! $HAS_RPM_OSTREE; then
+if $IS_DEBIAN_FAMILY && $HAS_APT; then
+    install_via_apt
+elif $HAS_DNF && ! $HAS_RPM_OSTREE; then
     install_via_dnf
 elif $HAS_RPM_OSTREE; then
     install_via_rpm_ostree
 else
     warn "No supported package manager found. Attempting pip install directly..."
-    warn "If it fails, install manually: portaudio portaudio-devel python3-pip ffmpeg"
+    warn "Fedora: portaudio portaudio-devel python3-pip ffmpeg"
+    warn "Debian/Mint: portaudio19-dev build-essential python3-pip ffmpeg"
 fi
 
 # ── Python packages ───────────────────────────────────────────────────────────
@@ -283,9 +305,14 @@ if command -v loginctl &>/dev/null; then
         warn "Could not enable linger (service will stop on logout)"
 fi
 
-# ── PipeWire / audio permissions ──────────────────────────────────────────────
-header "Audio setup (PipeWire)"
-info "Bazzite uses PipeWire. Checking audio group membership..."
+# ── PipeWire / PulseAudio / audio permissions ────────────────────────────────
+header "Audio setup"
+
+if $IS_DEBIAN_FAMILY; then
+    info "Linux Mint / Debian family. Checking audio group membership..."
+else
+    info "Bazzite uses PipeWire. Checking audio group membership..."
+fi
 
 if groups | grep -qw "audio"; then
     ok "User is in 'audio' group"
@@ -296,7 +323,7 @@ else
         warn "Could not add to audio group — you may need to do this manually: sudo usermod -aG audio $USER"
 fi
 
-# PipeWire volume / input source check
+# PipeWire or PulseAudio input source check
 if command -v pactl &>/dev/null; then
     info "Available audio sources (microphone/line-in inputs):"
     pactl list sources short 2>/dev/null | grep -v "monitor" | head -10 || true

@@ -1,14 +1,15 @@
-# CYRL Radio Listener — BazziteOS Edition
+# CYRL Radio Listener
 
 ATC voice-to-board pipeline for Red Lake Airport (CYRL).  
-Runs on a BazziteOS laptop (or any Fedora-based system) connected to a radio scanner via USB audio adapter.
+Runs on a BazziteOS laptop, Linux Mint/Debian/Ubuntu system, or (with extra steps) Windows, connected to a radio scanner via USB audio adapter.
 
 **Status board:** [status.redlakeairport.ca](https://status.redlakeairport.ca)  
-**Admin panel:** [admin.redlakeairport.ca](https://admin.redlakeairport.ca)
+**Admin panel:** [admin.redlakeairport.ca](https://admin.redlakeairport.ca)  
+**Windows instructions:** see [README-Windows.md](README-Windows.md)
 
 ---
 
-## One-Line Install
+## One-Line Install (BazziteOS / Fedora / Linux Mint)
 
 Open a terminal and paste:
 
@@ -18,7 +19,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/leblancaaron250-prog/cyrl-ra
 
 That's it. The installer will:
 
-1. Install `git` if missing (via `rpm-ostree` or `dnf`)
+1. Install `git` if missing (`rpm-ostree`/`dnf` on Fedora, `apt` on Mint/Debian)
 2. Clone this repo to `~/cyrl-radio-bazzite`
 3. Install all required system and Python packages
 4. Pre-download the Whisper `small` model (~460 MB)
@@ -26,6 +27,17 @@ That's it. The installer will:
 6. List your available audio input devices
 
 > **Re-running is safe.** Pull updates and re-run any time — your config at `/etc/cyrl-pi/config` is never overwritten.
+
+### Linux Mint / Debian / Ubuntu packages
+
+On Linux Mint (and other Debian-family systems), the setup script installs these instead of the Fedora packages:
+
+```bash
+sudo apt update
+sudo apt install python3 python3-pip portaudio19-dev ffmpeg build-essential python3-dev
+```
+
+Everything else (pip packages, VAD, systemd user service, config path) is unchanged.
 
 ---
 
@@ -112,6 +124,7 @@ Recognized intents: `landing`, `inbound`, `on_final`, `position_report`, `depart
 | `bazzite-setup.sh` | Full installer (system packages, pip, service, config) |
 | `radio-listener.py` | The listener daemon |
 | `test-audio.sh` | Quick audio cable / mic sanity check |
+| `README-Windows.md` | Windows setup instructions (CMD/PowerShell) |
 
 ---
 
