@@ -10,7 +10,7 @@ This describes how to run the same ATC voice-to-board pipeline on Windows. The P
 
 1. **Python 3.10 or newer** — download the installer from [python.org](https://www.python.org/downloads/windows/) and check "Add Python to PATH" during installation.
 2. **Git for Windows** (optional) — only needed for the `git clone` method. Download from [gitforwindows.org](https://gitforwindows.org/) or use `winget install --id Git.Git -e`. If you don't want to install it, use the ZIP download in "Option B" below.
-3. **FFmpeg** — download a Windows build from [ffmpeg.org/download.html](https://ffmpeg.org/download.html) or use `winget install Gyan.FFmpeg`, then add its `bin` folder to your `PATH`.
+3. **FFmpeg** — Whisper calls `ffmpeg` as a command when loading audio, so it must be on your `PATH`. See "Adding FFmpeg to PATH" below.
 4. A USB audio adapter or sound card with a line-in/microphone jack, plus your scanner on 122.300 MHz.
 
 ## Get the files
@@ -59,6 +59,45 @@ python -m pip install openai-whisper sounddevice scipy requests numpy
 PowerShell is equivalent; just replace `REM` with `#`.
 
 > **Note:** Option B users skip `git` entirely. The only downside is pulling updates later requires re-downloading the ZIP.
+
+## Adding FFmpeg to PATH
+
+**Easiest — winget (adds itself to PATH automatically):**
+
+```bat
+winget install --id Gyan.FFmpeg -e
+```
+
+Close and reopen Command Prompt, then verify:
+
+```bat
+ffmpeg -version
+```
+
+`winget` places a link in `%LOCALAPPDATA%\Microsoft\WinGet\Links`, which is already on your PATH — no manual editing needed.
+
+**Manual — downloaded FFmpeg build (e.g. from ffmpeg.org):**
+
+1. Extract the ZIP somewhere permanent, e.g. `C:\ffmpeg`
+2. Press **Win**, type `env`, open **"Edit the system environment variables"**
+3. Click **Environment Variables...**
+4. Under **User variables for \<you\>** (top box), select **Path** → **Edit...**
+5. **New** → enter `C:\ffmpeg\bin` → **OK** on all dialogs
+6. **Close and reopen Command Prompt** — existing windows never see PATH changes
+7. Verify with `ffmpeg -version`
+
+> Add the folder containing `ffmpeg.exe` (the `bin` folder), not the top-level folder.
+
+**Quick test without editing PATH (current window only):**
+
+```bat
+set PATH=%PATH%;C:\ffmpeg\bin
+ffmpeg -version
+```
+
+This is temporary — it vanishes when the window closes. Useful to confirm the wiring works before making it permanent.
+
+> **Note on pip:** Python package installs (`pip install torch ...`) never add directories to PATH. They don't need to — Python, not the shell, finds installed packages. Only command-line tools like `ffmpeg` (and `git`, `python`) need PATH entries.
 
 ## Configuration
 
