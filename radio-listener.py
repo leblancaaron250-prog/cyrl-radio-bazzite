@@ -433,14 +433,34 @@ def record_transmission() -> Optional[np.ndarray]:
     # PipeWire-friendly: use 'default' if device is PipeWire virtual node
     device = AUDIO_DEVICE_IDX
 
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE, channels=1, dtype="int16",
-        device=device, blocksize=CHUNK_FRAMES,
-        latency="low",   # PipeWire handles this gracefully
-    ) as stream:
+    def _open(channels: int):
+        return sd.InputStream(
+            samplerate=SAMPLE_RATE, channels=channels, dtype="int16",
+            device=device, blocksize=CHUNK_FRAMES,
+            latency="low",   # PipeWire handles this gracefully
+        )
+
+    # Some Windows drivers (WASAPI shared mode) refuse mono-only input opens
+    # with PaErrorCode -9998 "Invalid number of channels". Retry stereo and
+    # mix down to mono so all downstream code stays mono.
+    stream_channels = 1
+    try:
+        stream_ctx = _open(1)
+    except sd.PortAudioError as e:
+        if "channels" in str(e).lower() or "-9998" in str(e):
+            log.warning(f"Device refused mono input ({e}) — opening 2ch and mixing down to mono")
+            stream_ctx = _open(2)
+            stream_channels = 2
+        else:
+            raise
+
+    with stream_ctx as stream:
         while True:
             chunk, _ = stream.read(CHUNK_FRAMES)
-            chunk = chunk.flatten()
+            if stream_channels == 2:
+                chunk = chunk.astype(np.float32).mean(axis=1).astype(np.int16)
+            else:
+                chunk = chunk.flatten()
 
             if VAD_AVAILABLE:
                 tensor = torch.FloatTensor(chunk.astype(np.float32) / 32768.0)
