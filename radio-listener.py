@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-CYRL Radio Listener — BazziteOS / Fedora Edition
+CYRL Radio Listener — Multi-Platform Edition
 Red Lake Airport (CYRL) — voice-to-board pipeline
 
 Identical to the Raspberry Pi version in function, adapted for:
-  • PipeWire / PulseAudio (BazziteOS default audio stack)
-  • User-mode systemd service (no root required)
-  • Fedora-compatible paths and logging
-  • Energy-floor VAD fallback tuned for laptop soundcards
+  • BazziteOS / Fedora (PipeWire / PulseAudio, user-mode systemd service)
+  • Linux Mint / Debian / Ubuntu (same systemd service, apt-based install)
+  • Windows (reads config.ini next to this script; run manually or via Task Scheduler)
 
 Pipeline:
   Scanner (122.300 MHz) → USB audio adapter / combo jack
@@ -18,7 +17,10 @@ Pipeline:
     → POST to Cloudflare Worker /radio-report
     → Status board picks it up within one refresh cycle
 
-Configuration: /etc/cyrl-pi/config (key=value, bash-compatible)
+Configuration:
+  • Linux (Bazzite/Mint/Debian): /etc/cyrl-pi/config
+  • Windows: config.ini in the same directory as this script
+Both are key=value, bash/INI-compatible.
 
 Required:
   WORKER_SECRET   — shared secret (set matching value in Admin → Pi Feeder)
@@ -45,9 +47,19 @@ from datetime import datetime, timezone
 from typing import Optional
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
+IS_WINDOWS = os.name == "nt"
 HOME = Path.home()
-DEFAULT_LOG_DIR = HOME / ".local" / "share" / "cyrl-radio" / "logs"
-CONFIG_FILE = Path("/etc/cyrl-pi/config")
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+if IS_WINDOWS:
+    # Windows: keep logs and cache under the user profile, not the script folder,
+    # so re-cloning or moving the repo does not lose history.
+    APP_DATA_DIR = HOME / "AppData" / "Local" / "cyrl-radio"
+    DEFAULT_LOG_DIR = APP_DATA_DIR / "logs"
+    CONFIG_FILE = SCRIPT_DIR / "config.ini"
+else:
+    DEFAULT_LOG_DIR = HOME / ".local" / "share" / "cyrl-radio" / "logs"
+    CONFIG_FILE = Path("/etc/cyrl-pi/config")
 
 # ── Config loader ─────────────────────────────────────────────────────────────
 def load_config() -> dict:
@@ -67,9 +79,9 @@ def load_config() -> dict:
         "PIPEWIRE_LATENCY":   "128",
     }
     if CONFIG_FILE.exists():
-        for line in CONFIG_FILE.read_text().splitlines():
+        for line in CONFIG_FILE.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
+            if not line or line.startswith("#") or line.startswith(";") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
             k = k.strip()
@@ -345,7 +357,7 @@ def adsb_crossref(parsed: dict) -> dict:
 # ── Worker POST ───────────────────────────────────────────────────────────────
 def post_to_worker(parsed: dict, timestamp_utc: str) -> bool:
     if not WORKER_SECRET:
-        log.warning("WORKER_SECRET not set — skipping POST. Set it in /etc/cyrl-pi/config")
+        log.warning(f"WORKER_SECRET not set — skipping POST. Set it in {CONFIG_FILE}")
         return False
     try:
         resp = requests.post(
@@ -496,7 +508,7 @@ def process_clip(audio: np.ndarray):
     finally:
         try:
             os.unlink(wav_path)
-        except OSError:
+        except (OSError, PermissionError):
             pass
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -513,14 +525,16 @@ def main():
 
     if not WORKER_SECRET:
         log.warning("="*60)
-        log.warning("WORKER_SECRET is not set in /etc/cyrl-pi/config")
+        log.warning(f"WORKER_SECRET is not set in {CONFIG_FILE}")
         log.warning("Transmissions will be logged locally but NOT sent to the board.")
         log.warning("Set WORKER_SECRET and restart to enable board integration.")
         log.warning("="*60)
 
     log.info(
         f"\n{'='*55}\n"
-        f"  CYRL Radio Listener — BazziteOS\n"
+        f"  CYRL Radio Listener\n"
+        f"  Platform     : {'Windows' if IS_WINDOWS else 'Linux'}\n"
+        f"  Config file  : {CONFIG_FILE}\n"
         f"  Audio device : {AUDIO_DEVICE_IDX}\n"
         f"  Sample rate  : {SAMPLE_RATE} Hz\n"
         f"  Frequency    : {CFG['FREQUENCY']} MHz\n"
@@ -548,8 +562,10 @@ def main():
         except sd.PortAudioError as e:
             consecutive_errors += 1
             log.error(f"Audio device error ({consecutive_errors}): {e}")
-            if "PipeWire" in str(e) or "ALSA" in str(e):
+            if not IS_WINDOWS and ("PipeWire" in str(e) or "ALSA" in str(e)):
                 log.warning("PipeWire/ALSA error — try: systemctl --user restart pipewire pipewire-pulse")
+            if IS_WINDOWS and ("MME" in str(e) or "WASAPI" in str(e) or "DirectSound" in str(e)):
+                log.warning("Windows audio backend error — check the device is not in use, then restart the listener.")
             if consecutive_errors >= 5:
                 log.error("Too many errors — sleeping 60s")
                 time.sleep(60)

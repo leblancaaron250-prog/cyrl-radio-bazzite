@@ -50,7 +50,7 @@ DUMP1090_URL=http://127.0.0.1:8080/data/aircraft.json
 
 Fill in `WORKER_SECRET` from Admin panel → Pi Feeder → Radio Listener Secret.
 
-> **Note:** the current `radio-listener.py` reads `/etc/cyrl-pi/config` by default on Linux. On Windows it should read this `config.ini` in the working directory instead. If it does not yet do so, set the environment variables before running, or ask us to update the script to auto-detect Windows.
+> **Note:** `radio-listener.py` auto-detects the platform. On Windows it reads `config.ini` from the folder containing the script, and writes logs to `%LOCALAPPDATA%\cyrl-radio\logs`. On Linux it still reads `/etc/cyrl-pi/config`.
 
 ## List audio devices
 

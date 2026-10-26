@@ -1,0 +1,33 @@
+; CYRL Radio Listener — configuration (Windows)
+; Copy this file to config.ini and fill in WORKER_SECRET.
+; On Linux/Bazzite/Mint the equivalent file is /etc/cyrl-pi/config.
+
+; Cloudflare Worker URL (do not change unless you redeploy)
+WORKER_URL=https://cyrl-fa-relay.cyrl-airport.workers.dev
+
+; Secret key — MUST match Admin panel → Pi Feeder → Radio Listener Secret
+WORKER_SECRET=REPLACE_ME
+
+; Whisper model: base (fastest), small (recommended), medium (most accurate)
+WHISPER_MODEL=small
+
+; Audio device index — run: python -c "import sounddevice; print(sounddevice.query_devices())"
+AUDIO_DEVICE=1
+
+; Frequency being monitored (informational only — displayed in logs)
+FREQUENCY=122.300
+
+; VAD sensitivity: 0.0 (most sensitive) → 1.0 (least sensitive)
+VAD_THRESHOLD=0.35
+
+; Seconds of silence before a clip is considered complete
+SILENCE_SECONDS=1.5
+
+; Minimum clip length to bother transcribing (seconds)
+MIN_SPEECH_SECONDS=0.8
+
+; Local ADS-B feed (optional — used to cross-reference registrations)
+DUMP1090_URL=http://127.0.0.1:8080/data/aircraft.json
+
+; Log directory (default: %LOCALAPPDATA%\cyrl-radio\logs)
+; LOG_DIR=C:\cyrl-radio\logs
