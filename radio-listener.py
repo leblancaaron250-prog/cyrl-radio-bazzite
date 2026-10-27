@@ -520,7 +520,7 @@ def record_transmission() -> Optional[np.ndarray]:
     silence_cnt = 0
     vad_buffer = torch.FloatTensor([])   # VAD window carry-over (needs 512-sample windows)
 
-    log.debug("Listening for transmission…")
+    log.debug("Opening audio stream...")
 
     # PipeWire-friendly: use 'default' if device is PipeWire virtual node
     # Windows: avoid WDM-KS (no blocking-read support)
@@ -548,6 +548,10 @@ def record_transmission() -> Optional[np.ndarray]:
             raise
 
     with stream_ctx as stream:
+        log.info(
+            f"Listening for transmissions on device {device} "
+            f"({stream_channels}ch, {SAMPLE_RATE} Hz) — waiting for speech..."
+        )
         while True:
             chunk, _ = stream.read(CHUNK_FRAMES)
             if stream_channels == 2:
