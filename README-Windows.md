@@ -133,6 +133,21 @@ This prints every device with its host API (MME, DirectSound, WASAPI, WDM-KS) an
 - Prefer the **WASAPI** version, then DirectSound, then MME
 - **Avoid `Windows WDM-KS` entries** — they cannot be read in blocking mode (PaErrorCode -9999). If you set one, the listener tries to auto-switch to the same device under WASAPI/MME, but picking the right index up front is cleaner
 
+## Find the right input jack (scanner "record out" -> 3.5mm)
+
+1. Plug the scanner's record-out cable into an input jack (mic jack, or a blue Line In if present). If Windows/Realtek pops up "Which device did you plug in?", choose **Line In** (preferred) or **Microphone**.
+2. Run `python list-devices.py` — compare against the list before plugging in. A new `IN` entry (or one that changed) is your jack.
+3. Run the level meter against each candidate index:
+   ```bat
+   python level-meter.py 0
+   ```
+   Key the scanner or open its squelch — the bar should jump on the right device. Try the "Microsoft Sound Mapper - Input" (MME, index 0) too — it follows the default recording device.
+4. Set `AUDIO_DEVICE` in `config.ini` to the working index (prefer WASAPI entries; WDM-KS ones are auto-switched by the listener).
+
+Notes:
+- On machines where the mic input only appears under WDM-KS, set that jack as the default recording device (mmsys.cpl → Recording) and use the MME "Microsoft Sound Mapper - Input" entry — it maps to whatever the default input is.
+- Keep the scanner volume moderate — the record-out jack is usually a fixed level, so test with the meter before running Whisper on it.
+
 ## Test audio input
 
 `test-audio.sh` is a Linux shell script. On Windows, run the equivalent Python one-liner to record and play back a short clip:
