@@ -417,6 +417,51 @@ ENERGY_THRESHOLD = 600
 def rms_energy(chunk: np.ndarray) -> float:
     return float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2)))
 
+def _hostapi_name(dev: dict) -> str:
+    try:
+        return sd.query_hostapis(dev["hostapi"])["name"]
+    except Exception:
+        return "?"
+
+def resolve_windows_device(idx: int) -> int:
+    """Windows: the WDM-KS host API cannot do blocking reads
+    (PaErrorCode -9999 'Blocking API not supported yet'). If the configured
+    device is a WDM-KS entry, find the same physical device under WASAPI
+    (best), DirectSound, or MME and return that index instead."""
+    if not IS_WINDOWS:
+        return idx
+    try:
+        dev = sd.query_devices(idx, kind="input")
+    except Exception:
+        return idx
+    host = _hostapi_name(dev)
+    if "WDM-KS" not in host:
+        return idx
+    rank = {"WASAPI": 0, "DirectSound": 1, "MME": 2}
+    candidates = []
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_input_channels"] <= 0 or d["name"] != dev["name"]:
+            continue
+        h = _hostapi_name(d)
+        if h in rank:
+            candidates.append((rank[h], i, h))
+    if candidates:
+        candidates.sort()
+        _, new_idx, new_host = candidates[0]
+        log.warning(
+            f"Audio device {idx} is a WDM-KS entry, which Windows cannot read "
+            f"in blocking mode. Switching to the same device under {new_host} "
+            f"(index {new_idx})."
+        )
+        return new_idx
+    log.error(
+        f"Audio device {idx} ({dev['name']}) is only available via WDM-KS, "
+        "which does not support this read mode. Re-run the device listing at "
+        "startup and set AUDIO_DEVICE to the MME or WASAPI entry for your "
+        "adapter."
+    )
+    return idx
+
 def record_transmission() -> Optional[np.ndarray]:
     CHUNK_FRAMES  = int(SAMPLE_RATE * 0.1)   # 100 ms
     PRE_BUFFER_N  = 8                          # ~800ms pre-buffer (laptop mic has more latency)
@@ -431,7 +476,8 @@ def record_transmission() -> Optional[np.ndarray]:
     log.debug("Listening for transmission…")
 
     # PipeWire-friendly: use 'default' if device is PipeWire virtual node
-    device = AUDIO_DEVICE_IDX
+    # Windows: avoid WDM-KS (no blocking-read support)
+    device = resolve_windows_device(AUDIO_DEVICE_IDX)
 
     def _open(channels: int):
         return sd.InputStream(
@@ -539,7 +585,7 @@ def main():
         for i, d in enumerate(sd.query_devices()):
             if d["max_input_channels"] > 0:
                 default = " ← SELECTED" if i == AUDIO_DEVICE_IDX else ""
-                log.info(f"  [{i}] {d['name']}{default}")
+                log.info(f"  [{i}] {d['name']} ({_hostapi_name(d)}){default}")
     except Exception as e:
         log.warning(f"Could not enumerate audio devices: {e}")
 
@@ -584,6 +630,8 @@ def main():
             log.error(f"Audio device error ({consecutive_errors}): {e}")
             if not IS_WINDOWS and ("PipeWire" in str(e) or "ALSA" in str(e)):
                 log.warning("PipeWire/ALSA error — try: systemctl --user restart pipewire pipewire-pulse")
+            if IS_WINDOWS and ("WDM-KS" in str(e) or "Blocking API" in str(e)):
+                log.warning("WDM-KS devices cannot be read this way — the listener should auto-switch to WASAPI/MME. If this repeats, set AUDIO_DEVICE to a non-WDM-KS entry.")
             if IS_WINDOWS and ("MME" in str(e) or "WASAPI" in str(e) or "DirectSound" in str(e)):
                 log.warning("Windows audio backend error — check the device is not in use, then restart the listener.")
             if consecutive_errors >= 5:
