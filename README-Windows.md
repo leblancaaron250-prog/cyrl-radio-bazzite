@@ -122,10 +122,16 @@ Fill in `WORKER_SECRET` from Admin panel → Pi Feeder → Radio Listener Secret
 ## List audio devices
 
 ```bat
-python -c "import sounddevice as sd; print(sd.query_devices())"
+python list-devices.py
 ```
 
-Find your USB adapter/line-in in the list and set `AUDIO_DEVICE` to that index.
+This prints every device with its host API (MME, DirectSound, WASAPI, WDM-KS) and channel counts. Find your USB adapter/line-in and set `AUDIO_DEVICE` to that index.
+
+**Which entry to pick on Windows:**
+
+- Pick an `IN` entry (has input channels) for your adapter
+- Prefer the **WASAPI** version, then DirectSound, then MME
+- **Avoid `Windows WDM-KS` entries** — they cannot be read in blocking mode (PaErrorCode -9999). If you set one, the listener tries to auto-switch to the same device under WASAPI/MME, but picking the right index up front is cleaner
 
 ## Test audio input
 
@@ -166,6 +172,9 @@ Or install as a Windows service using [NSSM](https://nssm.cc/) if it must run wi
 - `torch.hub` downloads to `%USERPROFILE%\.cache\torch\hub`; the Silero VAD and Whisper models download on first run, exactly as on Linux.
 - Whisper's `fp16` warning on CPU appears on Windows too and is harmless.
 - If the console closes immediately, run from an open Command Prompt so you can see any Python traceback.
+- `No module named 'packaging'` when loading Silero VAD: run `python -m pip install packaging` — without it the listener falls back to crude RMS-energy detection, which is much noisier.
+- `PaErrorCode -9998 Invalid number of channels`: your `AUDIO_DEVICE` index points at a device that is not a usable input (often an output device). Run `python list-devices.py` and pick an `IN` entry. The listener now falls back to the system default input and warns loudly when this happens.
+- `PaErrorCode -9999 / WDM-KS 'Blocking API not supported yet'`: you picked a WDM-KS entry — see "Which entry to pick" above.
 - ZIP-install users (Option B) update by re-downloading the ZIP and replacing `radio-listener.py` — your `config.ini` and logs are unaffected.
 
 ## Verified against

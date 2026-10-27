@@ -424,16 +424,49 @@ def _hostapi_name(dev: dict) -> str:
         return "?"
 
 def resolve_windows_device(idx: int) -> int:
-    """Windows: the WDM-KS host API cannot do blocking reads
-    (PaErrorCode -9999 'Blocking API not supported yet'). If the configured
-    device is a WDM-KS entry, find the same physical device under WASAPI
-    (best), DirectSound, or MME and return that index instead."""
+    """Windows audio sanity checks:
+    1. The WDM-KS host API cannot do blocking reads
+       (PaErrorCode -9999 'Blocking API not supported yet'). If the configured
+       device is a WDM-KS entry, find the same physical device under WASAPI
+       (best), DirectSound, or MME and use that index instead.
+    2. If the configured index is not a usable input at all (an output
+       device, or a device with no input channels), fall back to the system
+       default input so the listener still runs, with a loud warning."""
     if not IS_WINDOWS:
         return idx
-    try:
-        dev = sd.query_devices(idx, kind="input")
-    except Exception:
+
+    def _usable_input(i) -> Optional[dict]:
+        try:
+            d = sd.query_devices(i, kind="input")
+        except Exception:
+            return None
+        if d.get("max_input_channels", 0) <= 0:
+            return None
+        return d
+
+    dev = _usable_input(idx)
+    if dev is None:
+        # Configured index is not an input — fall back to system default input
+        try:
+            default_idx = sd.default.device[0]
+            ddev = _usable_input(default_idx)
+        except Exception:
+            ddev = None
+        if ddev is not None and "WDM-KS" not in _hostapi_name(ddev):
+            log.error(
+                f"Configured AUDIO_DEVICE {idx} is not a usable input device. "
+                f"Falling back to the system default input (index {default_idx}: "
+                f"{ddev['name']}, {_hostapi_name(ddev)}). Fix AUDIO_DEVICE in "
+                f"{CONFIG_FILE} to make this permanent."
+            )
+            return default_idx
+        log.error(
+            f"Configured AUDIO_DEVICE {idx} is not a usable input device, and no "
+            "valid default input was found. Run 'python list-devices.py' and "
+            "set AUDIO_DEVICE to an entry with input channels."
+        )
         return idx
+
     host = _hostapi_name(dev)
     if "WDM-KS" not in host:
         return idx
@@ -456,9 +489,8 @@ def resolve_windows_device(idx: int) -> int:
         return new_idx
     log.error(
         f"Audio device {idx} ({dev['name']}) is only available via WDM-KS, "
-        "which does not support this read mode. Re-run the device listing at "
-        "startup and set AUDIO_DEVICE to the MME or WASAPI entry for your "
-        "adapter."
+        "which does not support this read mode. Run 'python list-devices.py' "
+        "and set AUDIO_DEVICE to the MME or WASAPI entry for your adapter."
     )
     return idx
 
@@ -581,11 +613,12 @@ def process_clip(audio: np.ndarray):
 def main():
     # List available devices on startup
     try:
-        log.info("Available audio input devices:")
+        log.info("Available audio devices (inputs marked IN):")
         for i, d in enumerate(sd.query_devices()):
-            if d["max_input_channels"] > 0:
-                default = " ← SELECTED" if i == AUDIO_DEVICE_IDX else ""
-                log.info(f"  [{i}] {d['name']} ({_hostapi_name(d)}){default}")
+            role = "IN" if d["max_input_channels"] > 0 else "out"
+            chans = f"in:{d['max_input_channels']} out:{d['max_output_channels']}"
+            default = " ← SELECTED" if i == AUDIO_DEVICE_IDX else ""
+            log.info(f"  [{i}] ({role}) {d['name']} [{chans}] ({_hostapi_name(d)}){default}")
     except Exception as e:
         log.warning(f"Could not enumerate audio devices: {e}")
 
