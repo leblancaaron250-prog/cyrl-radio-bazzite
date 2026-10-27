@@ -175,6 +175,7 @@ Or install as a Windows service using [NSSM](https://nssm.cc/) if it must run wi
 - `No module named 'packaging'` when loading Silero VAD: run `python -m pip install packaging` — without it the listener falls back to crude RMS-energy detection, which is much noisier.
 - `PaErrorCode -9998 Invalid number of channels`: your `AUDIO_DEVICE` index points at a device that is not a usable input (often an output device). Run `python list-devices.py` and pick an `IN` entry. The listener now falls back to the system default input and warns loudly when this happens.
 - `PaErrorCode -9999 / WDM-KS 'Blocking API not supported yet'`: you picked a WDM-KS entry — see "Which entry to pick" above.
+- **No usable inputs at all** (e.g. `python list-devices.py` shows `Default input device: -1`, and inputs exist only under WDM-KS): your microphone is disabled in Windows. Press **Win+R**, run `mmsys.cpl` → **Recording** tab → right-click → **Show Disabled Devices** → right-click your microphone → **Enable** and **Set as Default Device**. Re-run `python list-devices.py` — MME/DirectSound/WASAPI mic entries should now appear; set `AUDIO_DEVICE` to the WASAPI one. Also check Settings → Privacy & security → Microphone → allow desktop apps if enabling doesn't do it.
 - ZIP-install users (Option B) update by re-downloading the ZIP and replacing `radio-listener.py` — your `config.ini` and logs are unaffected.
 
 ## Verified against
