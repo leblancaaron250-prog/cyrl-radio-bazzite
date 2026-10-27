@@ -96,11 +96,25 @@ LOG_DIR = Path(CFG["LOG_DIR"])
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+class _SafeConsoleStream:
+    """Wraps stdout so a non-encodable character (e.g. '←' on a cp1252 Windows
+    console) can never crash the logger — it degrades to '?' instead."""
+    def __init__(self, stream):
+        self._stream = stream
+    def write(self, msg):
+        try:
+            self._stream.write(msg)
+        except UnicodeEncodeError:
+            enc = getattr(self._stream, "encoding", "ascii") or "ascii"
+            self._stream.write(msg.encode(enc, errors="replace").decode(enc, errors="replace"))
+    def flush(self):
+        self._stream.flush()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.StreamHandler(sys.stdout),
+        logging.StreamHandler(_SafeConsoleStream(sys.stdout)),
         logging.FileHandler(LOG_DIR / "listener.log"),
     ],
 )
@@ -504,6 +518,7 @@ def record_transmission() -> Optional[np.ndarray]:
     speech_buf = []
     in_speech  = False
     silence_cnt = 0
+    vad_buffer = torch.FloatTensor([])   # VAD window carry-over (needs 512-sample windows)
 
     log.debug("Listening for transmission…")
 
@@ -541,8 +556,26 @@ def record_transmission() -> Optional[np.ndarray]:
                 chunk = chunk.flatten()
 
             if VAD_AVAILABLE:
-                tensor = torch.FloatTensor(chunk.astype(np.float32) / 32768.0)
-                is_speech = vad_model(tensor, SAMPLE_RATE).item() >= VAD_THRESHOLD
+                # Silero VAD only accepts exactly 512-sample windows at 16 kHz
+                # (256 at 8 kHz). Our read chunks are 100 ms (1600 samples), so
+                # buffer audio and feed consecutive 512-sample windows, taking
+                # the max speech probability across the windows in this chunk.
+                vad_buffer = torch.cat(
+                    [vad_buffer, torch.FloatTensor(chunk.astype(np.float32) / 32768.0)]
+                )
+                window_probs = []
+                try:
+                    while vad_buffer.shape[-1] >= 512:
+                        window_probs.append(
+                            vad_model(vad_buffer[:512], SAMPLE_RATE).item()
+                        )
+                        vad_buffer = vad_buffer[512:]
+                except Exception as e:
+                    log.warning(f"VAD call failed ({e}) — using RMS energy for this chunk")
+                if window_probs:
+                    is_speech = max(window_probs) >= VAD_THRESHOLD
+                else:
+                    is_speech = rms_energy(chunk) >= ENERGY_THRESHOLD
             else:
                 is_speech = rms_energy(chunk) >= ENERGY_THRESHOLD
 
@@ -617,7 +650,7 @@ def main():
         for i, d in enumerate(sd.query_devices()):
             role = "IN" if d["max_input_channels"] > 0 else "out"
             chans = f"in:{d['max_input_channels']} out:{d['max_output_channels']}"
-            default = " ← SELECTED" if i == AUDIO_DEVICE_IDX else ""
+            default = " <-- SELECTED" if i == AUDIO_DEVICE_IDX else ""
             log.info(f"  [{i}] ({role}) {d['name']} [{chans}] ({_hostapi_name(d)}){default}")
     except Exception as e:
         log.warning(f"Could not enumerate audio devices: {e}")
