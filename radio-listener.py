@@ -646,6 +646,45 @@ def process_clip(audio: np.ndarray):
         except (OSError, PermissionError):
             pass
 
+# ── Heartbeat ─────────────────────────────────────────────────────────────────
+HEARTBEAT_INTERVAL = 60  # seconds between liveness pings to the Worker
+
+def _heartbeat_loop():
+    """Posts a heartbeat to the Worker every HEARTBEAT_INTERVAL seconds.
+
+    Transmission reports alone are too sparse at CYRL (quiet periods of
+    hours), so the Admin panel can't tell a running listener from a dead one
+    using reports. The heartbeat gives it ground truth."""
+    import socket
+    hostname = socket.gethostname()
+    warned_401 = False
+    while True:
+        try:
+            r = requests.post(
+                f"{WORKER_URL}/radio-heartbeat",
+                json={
+                    "platform": "windows" if IS_WINDOWS else "linux",
+                    "hostname": hostname,
+                    "model":    WHISPER_MODEL_NAME,
+                },
+                headers={"X-Radio-Secret": WORKER_SECRET},
+                timeout=10,
+            )
+            if r.status_code == 401 and not warned_401:
+                log.warning("Heartbeat rejected (401) — WORKER_SECRET does not match the Admin panel secret. Status board will show this listener as offline.")
+                warned_401 = True
+        except requests.RequestException as e:
+            log.debug(f"heartbeat post failed: {e}")
+        time.sleep(HEARTBEAT_INTERVAL)
+
+def start_heartbeat_thread():
+    if not WORKER_SECRET:
+        log.warning("No WORKER_SECRET — heartbeat disabled; the Admin panel cannot confirm this listener is running.")
+        return
+    t = threading.Thread(target=_heartbeat_loop, daemon=True, name="heartbeat")
+    t.start()
+    log.info(f"Heartbeat started — pinging {WORKER_URL} every {HEARTBEAT_INTERVAL}s")
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 def main():
     # List available devices on startup
@@ -681,6 +720,8 @@ def main():
         f"  Log dir      : {LOG_DIR}\n"
         f"{'='*55}"
     )
+
+    start_heartbeat_thread()
 
     consecutive_errors = 0
 
