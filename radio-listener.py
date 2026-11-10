@@ -238,13 +238,31 @@ def decode_phonetic_registration(text: str) -> Optional[str]:
     direct = re.search(r'\bC[-\s]?([FG][A-Z]{3})\b', text.upper())
     if direct:
         return f"C-{direct.group(1)}"
-    words = text.lower().split()
+    # Pilots routinely drop the "Charlie" country designator ("Foxtrot Hotel
+    # Whiskey Alpha"). Whisper often writes that as one bare uppercase token
+    # ("FHWA"), so accept a standalone all-caps F/G + 3 letters as well.
+    bare = re.search(r'\b([FG][A-Z]{3})\b', text)
+    if bare:
+        return f"C-{bare.group(1)}"
+    # Phonetic-word path. Split on hyphens too — Whisper sometimes fuses the
+    # words ("foxtrot-hotel-whiskey-alpha"). Note: the standalone word "a" is
+    # treated as the article, not the letter A (it would otherwise poison the
+    # letter run: "a Foxtrot Hotel Whiskey" -> C-AFHW).
+    words = text.lower().replace("-", " ").replace("/", " ").split()
+    raw_words = text.replace("-", " ").replace("/", " ").split()
     letters = []
-    for w in words:
+    for w, raw in zip(words, raw_words):
         w = w.strip(".,;:!?")
         if w in NATO:
             letters.append(NATO[w])
         elif len(w) == 1 and w.isalpha():
+            # The standalone word "a" is usually the article — treat it as the
+            # letter A only when it looks spoken: capitalized or followed by
+            # punctuation ("F H W A, ten miles back" vs "a Foxtrot Hotel...").
+            if w in ("a", "i") and not (
+                raw.rstrip(".,;:!?").isupper() or raw != raw.strip(".,;:!?")
+            ):
+                continue
             letters.append(w.upper())
     for start in range(len(letters)):
         seg5 = letters[start:start+5]
