@@ -75,6 +75,8 @@ def load_config() -> dict:
         "DUMP1090_URL":       "http://127.0.0.1:8080/data/aircraft.json",
         "LOG_DIR":            str(DEFAULT_LOG_DIR),
         "SAMPLE_RATE":        "16000",
+        # Pause between words that splits one clip into separate transmissions
+        "SEGMENT_GAP_SECONDS": "0.7",
         # Bazzite-specific: PipeWire latency hint (ms)
         "PIPEWIRE_LATENCY":   "128",
     }
@@ -128,6 +130,7 @@ AUDIO_DEVICE_IDX   = int(CFG["AUDIO_DEVICE"])
 VAD_THRESHOLD      = float(CFG["VAD_THRESHOLD"])
 SILENCE_SECS       = float(CFG["SILENCE_SECONDS"])
 MIN_SPEECH_SECS    = float(CFG["MIN_SPEECH_SECONDS"])
+SEGMENT_GAP_SECS   = float(CFG["SEGMENT_GAP_SECONDS"])
 DUMP1090_URL       = CFG["DUMP1090_URL"]
 SAMPLE_RATE        = int(CFG["SAMPLE_RATE"])
 PIPEWIRE_LATENCY   = int(CFG["PIPEWIRE_LATENCY"])
@@ -217,16 +220,22 @@ ARR_KEYWORDS = [
     "land","landing","inbound","arriving","arrival","final","approach",
     "looking to land","request landing","entering the circuit","circuit",
     "downwind","base leg","ten back","five back","miles back",
+    # Canadian CTAF phraseology — post-landing reports and clearances
+    "down and clear","down and cleared","clear of the runway","clear of runway",
+    "full stop","clear the active","cleared to land","cleared for landing",
 ]
 DEP_KEYWORDS = [
-    "depart","departing","departure","taking off","rolling","lifting off",
+    "depart","departing","departure","taking off","take off","takeoff","rolling","lifting off",
     "backtrack","holding short","ready for departure","outbound","clearance",
-    "leaving","departing the circuit",
+    "leaving","departing the circuit","cleared for takeoff","cleared for departure",
 ]
 
 # ── NLP helpers ───────────────────────────────────────────────────────────────
 def decode_phonetic_registration(text: str) -> Optional[str]:
-    direct = re.search(r'\bC[-\s]?([A-Z]{4})\b', text.upper())
+    # Canadian civil registrations are exclusively C-Fxxx or C-Gxxx. Restricting
+    # the direct pattern to those prefixes stops ordinary words from being read
+    # as registrations (Whisper writing "clear" was decoded as C-LEAR).
+    direct = re.search(r'\bC[-\s]?([FG][A-Z]{3})\b', text.upper())
     if direct:
         return f"C-{direct.group(1)}"
     words = text.lower().split()
@@ -407,10 +416,19 @@ WHISPER_PROMPT = (
     "Perimeter BLS, Wasaya WSG, North Star NSA, "
     "Superior SUP, Skycare PHX, ORNGE, medevac, "
     "landing, departing, circuit, final, downwind, "
+    "down and clear, clear of the runway, full stop, "
     "Red Lake, CYRL, Kenora, 122.300"
 )
 
-def transcribe_wav(wav_path: str) -> str:
+def transcribe_wav_segments(wav_path: str) -> list:
+    """Transcribe a clip and split it into separate transmissions.
+
+    CTAF/FSS radio is conversational: a pilot report and the reply often land
+    in the same audio clip when the pause between them is shorter than
+    SILENCE_SECONDS (e.g. "Superior 609 down and clear" ... "Superior 609,
+    roger"). Word-level timestamps let us split the transcript at any
+    inter-word pause >= SEGMENT_GAP_SECS, so each side of the exchange is
+    parsed, scored and reported as its own transmission."""
     try:
         result = _whisper_model.transcribe(
             wav_path, language="en",
@@ -418,11 +436,33 @@ def transcribe_wav(wav_path: str) -> str:
             temperature=0.0,
             condition_on_previous_text=False,
             fp16=False,
+            word_timestamps=True,
         )
-        return result.get("text", "").strip()
     except Exception as e:
         log.error(f"Whisper error: {e}")
-        return ""
+        return []
+    words = []
+    for seg in result.get("segments", []):
+        for w in seg.get("words", []):
+            txt = (w.get("word") or "").strip()
+            if txt:
+                words.append((float(w.get("start", 0.0)), float(w.get("end", 0.0)), txt))
+    if not words:
+        # No word timings available — fall back to the whole-clip text
+        text = result.get("text", "").strip()
+        return [text] if text else []
+    groups = [[words[0]]]
+    for prev, cur in zip(words, words[1:]):
+        if cur[0] - prev[1] >= SEGMENT_GAP_SECS:
+            groups.append([cur])
+        else:
+            groups[-1].append(cur)
+    segments = []
+    for g in groups:
+        txt = re.sub(r"\s+", " ", " ".join(w[2] for w in g)).strip(" ,.-")
+        if txt:
+            segments.append(txt)
+    return segments
 
 # ── VAD + recording loop ──────────────────────────────────────────────────────
 # RMS fallback threshold — tuned for laptop soundcards (slightly higher noise floor)
@@ -622,24 +662,27 @@ def process_clip(audio: np.ndarray):
         wav_path = f.name
     try:
         wav_io.write(wav_path, SAMPLE_RATE, audio)
-        transcript = transcribe_wav(wav_path)
-        if not transcript:
+        segments = transcribe_wav_segments(wav_path)
+        if not segments:
             log.info("Empty transcript — skipping")
             return
-        log.info(f"Transcript: {transcript!r}")
-        parsed = parse_transmission(transcript)
-        parsed = adsb_crossref(parsed)
-        log.info(
-            f"Parsed — reg={parsed['registration']} cs={parsed['callsign']} "
-            f"intent={parsed['intent']} dist={parsed['distance_nm']}nm "
-            f"rwy={parsed['runway']} conf={parsed['confidence']:.2f} "
-            f"adsb={parsed['adsb_confirmed']}"
-        )
-        log_transmission(parsed, ts_utc)
-        if parsed["confidence"] >= 0.3:
-            post_to_worker(parsed, ts_utc)
-        else:
-            log.info(f"Confidence {parsed['confidence']:.2f} < 0.30 — not posting")
+        if len(segments) > 1:
+            log.info(f"Exchange detected — {len(segments)} separate transmissions in this clip")
+        for i, transcript in enumerate(segments, 1):
+            log.info(f"Transcript [{i}/{len(segments)}]: {transcript!r}")
+            parsed = parse_transmission(transcript)
+            parsed = adsb_crossref(parsed)
+            log.info(
+                f"Parsed — reg={parsed['registration']} cs={parsed['callsign']} "
+                f"intent={parsed['intent']} dist={parsed['distance_nm']}nm "
+                f"rwy={parsed['runway']} conf={parsed['confidence']:.2f} "
+                f"adsb={parsed['adsb_confirmed']}"
+            )
+            log_transmission(parsed, ts_utc)
+            if parsed["confidence"] >= 0.3:
+                post_to_worker(parsed, ts_utc)
+            else:
+                log.info(f"Confidence {parsed['confidence']:.2f} < 0.30 — not posting")
     finally:
         try:
             os.unlink(wav_path)

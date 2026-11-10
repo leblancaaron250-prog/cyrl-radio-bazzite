@@ -23,6 +23,11 @@ VAD_THRESHOLD=0.35
 ; Seconds of silence before a clip is considered complete
 SILENCE_SECONDS=1.5
 
+; Pause between words that splits one clip into separate transmissions
+; (exchanges: pilot report ... reply, e.g. "609 down and clear" / "609, roger").
+; Lower = splits more aggressively; raise if a single slow speaker gets split.
+SEGMENT_GAP_SECONDS=0.7
+
 ; Minimum clip length to bother transcribing (seconds)
 MIN_SPEECH_SECONDS=0.8
 
