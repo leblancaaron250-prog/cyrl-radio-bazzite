@@ -42,6 +42,23 @@ cd cyrl-radio-bazzite-main
 
 (`curl` and `tar` are built into Windows 10/11. The folder is named `cyrl-radio-bazzite-main` because the ZIP unpacks with the branch name appended.)
 
+## Update the listener
+
+Run the self-updater from the folder containing the scripts:
+
+```bat
+python update.py
+```
+
+It downloads the latest versions of all scripts (radio-listener.py, the audio helpers, and itself), syntax-checks each one before installing, and never touches `config.ini` or your logs. "Everything is already up to date" means you're current.
+
+One-time bootstrap if your copy doesn't have update.py yet:
+
+```bat
+curl -L -o update.py https://raw.githubusercontent.com/leblancaaron250-prog/cyrl-radio-bazzite/main/update.py
+python update.py
+```
+
 ## Installation (Command Prompt)
 
 Open **Command Prompt** (run as your normal user, no administrator required) and paste:
