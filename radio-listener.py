@@ -187,6 +187,34 @@ NUM_WORDS = {
     "five":"5","six":"6","seven":"7","eight":"8","nine":"9","niner":"9",
 }
 
+def _levenshtein(a: str, b: str) -> int:
+    """Tiny edit-distance helper for fuzzy phonetic-word matching."""
+    if abs(len(a) - len(b)) > 2:
+        return 3
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[-1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+# English words that are within edit distance 1 of a NATO word — never fuzzy-
+# match these (Whisper writes "like" far more often than it mishears "Mike").
+_FUZZY_BLOCK = {"like", "rome", "tang", "hose", "tone", "mile", "nova", "nine"}
+
+def _nato_letter(word: str) -> Optional[str]:
+    """Exact NATO match, or a fuzzy match for Whisper's misspellings
+    ("FoxRot" -> F, "wisky" -> W, "juliet" -> J)."""
+    w = word.lower()
+    if w in NATO:
+        return NATO[w]
+    if len(w) >= 4 and w not in _FUZZY_BLOCK:
+        for name, letter in NATO.items():
+            if abs(len(w) - len(name)) <= 2 and _levenshtein(w, name) <= 1:
+                return letter
+    return None
+
 AIRCRAFT_HINTS = {
     "navajo":"Piper PA-31 Navajo","pa-31":"Piper PA-31 Navajo","pa31":"Piper PA-31 Navajo",
     "king air":"Beechcraft King Air","kingair":"Beechcraft King Air",
@@ -223,11 +251,17 @@ ARR_KEYWORDS = [
     # Canadian CTAF phraseology — post-landing reports and clearances
     "down and clear","down and cleared","clear of the runway","clear of runway",
     "full stop","clear the active","cleared to land","cleared for landing",
+    # Informal northern phraseology — arrivals
+    "straight in","joining the circuit","joining downwind","over the field",
+    "overhead the field","ten back","zero back",
 ]
 DEP_KEYWORDS = [
     "depart","departing","departure","taking off","take off","takeoff","rolling","lifting off",
     "backtrack","holding short","ready for departure","outbound","clearance",
     "leaving","departing the circuit","cleared for takeoff","cleared for departure",
+    # Informal northern phraseology — "plan off 26 to the north"
+    "plan off","planning off","plans off","planned off","departing off","rolling off",
+    "lining up off","ready off","off the ground","off the active",
 ]
 
 # ── NLP helpers ───────────────────────────────────────────────────────────────
@@ -245,16 +279,18 @@ def decode_phonetic_registration(text: str) -> Optional[str]:
     if bare:
         return f"C-{bare.group(1)}"
     # Phonetic-word path. Split on hyphens too — Whisper sometimes fuses the
-    # words ("foxtrot-hotel-whiskey-alpha"). Note: the standalone word "a" is
-    # treated as the article, not the letter A (it would otherwise poison the
-    # letter run: "a Foxtrot Hotel Whiskey" -> C-AFHW).
+    # words ("foxtrot-hotel-whiskey-alpha"). Whisper also misspells phonetic
+    # words ("FoxRot" for Foxtrot), so match them fuzzily. The standalone word
+    # "a" is treated as the article, not the letter A (it would otherwise
+    # poison the letter run: "a Foxtrot Hotel Whiskey" -> C-AFHW).
     words = text.lower().replace("-", " ").replace("/", " ").split()
     raw_words = text.replace("-", " ").replace("/", " ").split()
     letters = []
     for w, raw in zip(words, raw_words):
         w = w.strip(".,;:!?")
-        if w in NATO:
-            letters.append(NATO[w])
+        letter = _nato_letter(w)
+        if letter:
+            letters.append(letter)
         elif len(w) == 1 and w.isalpha():
             # The standalone word "a" is usually the article — treat it as the
             # letter A only when it looks spoken: capitalized or followed by
@@ -268,14 +304,24 @@ def decode_phonetic_registration(text: str) -> Optional[str]:
         seg5 = letters[start:start+5]
         if len(seg5) == 5 and seg5[0] == "C":
             return f"C-{''.join(seg5[1:])}"
+        # 4-letter window: only valid as a registration when it starts with
+        # F or G (dropped Charlie). Any 4 letters used to match, which decoded
+        # repeated callsigns like "Hotel Whiskey Alpha Hotel Whiskey..." as
+        # garbage registrations (C-HWAH).
         seg4 = letters[start:start+4]
-        if len(seg4) == 4:
+        if len(seg4) == 4 and seg4[0] in ("F", "G"):
             return f"C-{''.join(seg4)}"
     return None
 
 def decode_callsign(text: str) -> Optional[str]:
+    # Exclude common English words that look like 2-3 letters + a number
+    # ("plan OFF 26" was decoded as callsign OFF26).
+    NOT_CALLSIGNS = {
+        "OFF","THE","AND","FOR","TO","AT","ON","IN","OUT","UP","ONE","TWO",
+        "NORTH","SOUTH","EAST","WEST","PLAN","TEN","BACK",
+    }
     m = re.search(r'\b([A-Z]{2,3})\s?(\d{1,4})\b', text.upper())
-    if m:
+    if m and m.group(1) not in NOT_CALLSIGNS:
         return f"{m.group(1)}{m.group(2)}"
     return None
 
